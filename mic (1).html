@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AEP Speaking Practice — Recorder</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;500;600&display=swap">
+<style>
+:root{--navy:#142046;--navy1:#0E1733;--gold:#C4A159;--gold3:#D8BC7C;--bg:#FAF6EE;--card:#fff;--ink:#1D1C19;--ink2:#5C5548;--line:#E4DBC6;--bad:#A8382F;--ok:#3D7A4B}
+@media (prefers-color-scheme:dark){:root{--bg:#0B1129;--card:#142046;--ink:#F4EDDD;--ink2:#CFC5AE;--line:#2A3760}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Lexend","Segoe UI",system-ui,sans-serif;font-weight:300;padding:18px;line-height:1.5}
+h1{font-size:1.1rem;font-weight:600;margin:0 0 6px}
+.prompt{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:.95rem;margin-bottom:16px}
+.prompt .t{font-size:.75rem;color:var(--ink2);margin-bottom:4px}
+.center{text-align:center}
+.big{width:120px;height:120px;border-radius:50%;border:0;background:var(--gold);color:var(--navy1);font:inherit;font-weight:600;font-size:1rem;cursor:pointer;box-shadow:0 6px 18px rgba(20,32,70,.25);transition:transform .1s}
+.big:active{transform:scale(.96)}
+.big.rec{background:var(--bad);color:#fff;animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(168,56,47,.45)}50%{box-shadow:0 0 0 16px rgba(168,56,47,0)}}
+.time{font-size:2rem;font-weight:600;margin:14px 0 4px;font-variant-numeric:tabular-nums}
+.hint{color:var(--ink2);font-size:.85rem}
+.meter{height:6px;background:var(--line);border-radius:99px;margin:12px auto;max-width:240px;overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--gold);transition:width .1s}
+audio{width:100%;margin:14px 0 8px}
+.row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+.btn{font:inherit;font-weight:500;border:0;border-radius:10px;padding:11px 18px;cursor:pointer;background:var(--navy);color:#fff}
+.btn.gold{background:var(--gold);color:var(--navy1)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.err{color:var(--bad);font-size:.9rem;margin-top:12px}
+.ok{color:var(--ok);font-weight:500}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<h1>Speaking practice</h1>
+<div class="prompt"><div class="t">Your prompt</div><div id="prompt">Speak clearly in English.</div><div class="t" id="target" style="margin-top:6px"></div><div id="how" style="margin-top:8px;font-size:.85rem;color:var(--ink2)"></div></div>
+
+<div id="stage1" class="center">
+  <button class="big" id="recbtn">Start</button>
+  <div class="time" id="time">0:00</div>
+  <div class="meter"><i id="lvl"></i></div>
+  <div class="hint" id="hint">Tap Start, speak, then tap Stop.</div>
+  <div class="err hidden" id="err"></div>
+</div>
+
+<div id="stage2" class="center hidden">
+  <audio id="play" controls></audio>
+  <div class="hint">Listen back. Happy with it?</div>
+  <div class="row"><button class="btn ghost" id="again">Record again</button><button class="btn gold" id="use">Use this recording</button></div>
+  <div class="hint hidden" id="sent" style="margin-top:14px"></div>
+</div>
+
+<script>
+const q=new URLSearchParams(location.search);
+document.getElementById("prompt").textContent=q.get("p")||"Speak clearly in English.";
+const target=+q.get("t")||60;document.getElementById("how").textContent=q.get("h")||"";const maxSec=Math.min(target*2+30,300);
+function tlabel(s){return s===60?"1 minute":s===90?"90 seconds":s%60===0?(s/60)+" minutes":s+" seconds";}
+document.getElementById("target").textContent=`Speak for at least ${tlabel(target)}. Recording stops automatically at ${Math.floor(maxSec/60)}:${String(maxSec%60).padStart(2,"0")}.`;
+
+let rec=null,chunks=[],stream=null,start=0,timer=null,blob=null,seconds=0,ctx=null,raf=null;
+// Silent transcript for the teacher (never shown to the student). Uses the browser's built-in speech recognition where available.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let sr=null,srText=[],srInterim="",srOn=false,srNote=SR?"":"speech recognition is not available in this browser";
+function srStart(){if(!SR)return;srText=[];srInterim="";srNote="";srOn=true;srOpen();}
+function srOpen(){
+  try{sr=new SR();sr.lang=q.get("l")||"en-US";sr.continuous=true;sr.interimResults=true;sr.maxAlternatives=1;
+    sr.onresult=e=>{let it="";for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript.trim();if(!t)continue;if(e.results[i].isFinal)srText.push(t);else it+=(it?" ":"")+t;}srInterim=it;};
+    sr.onerror=e=>{if(e.error==="no-speech"||e.error==="aborted")return;srNote=e.error;if(e.error==="not-allowed"||e.error==="service-not-allowed"||e.error==="language-not-supported")srOn=false;};
+    sr.onend=()=>{if(srInterim){srText.push(srInterim);srInterim="";}if(srOn)srOpen();};
+    sr.start();
+  }catch(err){srNote=String(err.message||err);srOn=false;}}
+function srStop(){srOn=false;try{if(sr)sr.stop();}catch(err){}}
+const $=id=>document.getElementById(id);
+function fmt(s){return Math.floor(s/60)+":"+String(s%60).padStart(2,"0");}
+function fail(m){$("err").textContent=m;$("err").classList.remove("hidden");}
+
+async function begin(){
+  $("err").classList.add("hidden");
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||typeof MediaRecorder==="undefined"){fail("This browser cannot record audio. Try Chrome, Edge or Safari.");return;}
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}
+  catch(e){fail("Microphone not allowed. Click the lock icon in the address bar, allow the microphone, then try again.");return;}
+  const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus"].find(m=>MediaRecorder.isTypeSupported(m))||"";
+  rec=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);chunks=[];
+  rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  rec.onstop=()=>{srStop();stream.getTracks().forEach(t=>t.stop());clearInterval(timer);cancelAnimationFrame(raf);if(ctx){ctx.close();ctx=null;}
+    blob=new Blob(chunks,{type:rec.mimeType||mime||"audio/webm"});seconds=Math.round((Date.now()-start)/1000);
+    $("play").src=URL.createObjectURL(blob);$("stage1").classList.add("hidden");$("stage2").classList.remove("hidden");const short=seconds<target-5;$("use").textContent=short?`Use anyway (under ${tlabel(target)})`:"Use this recording";document.querySelector("#stage2 .hint").textContent=short?`Only ${seconds} second${seconds===1?"":"s"} — the target is ${tlabel(target)}. Tap Record again and keep talking.`:"Listen back. Happy with it?";};
+  // level meter
+  try{ctx=new (window.AudioContext||window.webkitAudioContext)();const src=ctx.createMediaStreamSource(stream);const an=ctx.createAnalyser();an.fftSize=512;src.connect(an);const buf=new Uint8Array(an.frequencyBinCount);
+    const tick=()=>{an.getByteTimeDomainData(buf);let sum=0;for(const v of buf){const d=(v-128)/128;sum+=d*d;}const rms=Math.sqrt(sum/buf.length);$("lvl").style.width=Math.min(100,rms*300)+"%";raf=requestAnimationFrame(tick);};tick();}catch(e){}
+  rec.start();start=Date.now();srStart();
+  $("recbtn").textContent="Stop";$("recbtn").classList.add("rec");$("hint").textContent="Recording… tap Stop when you have finished.";
+  timer=setInterval(()=>{const s=Math.round((Date.now()-start)/1000);$("time").textContent=fmt(s);$("time").style.color=s>=target?"var(--ok)":"";if(s>=target)$("hint").textContent="Target reached — finish your point, then tap Stop.";if(s>=maxSec)rec.stop();},250);
+}
+function stop(){if(rec&&rec.state!=="inactive")rec.stop();}
+$("recbtn").onclick=()=>{rec&&rec.state==="recording"?stop():begin();};
+$("again").onclick=()=>{$("stage2").classList.add("hidden");$("stage1").classList.remove("hidden");$("recbtn").textContent="Start";$("recbtn").classList.remove("rec");$("time").textContent="0:00";$("hint").textContent="Tap Start, speak, then tap Stop.";};
+$("use").onclick=()=>{
+  if(!blob)return;$("use").disabled=true;
+  const fr=new FileReader();
+  fr.onload=()=>{const b64=fr.result.split(",")[1];
+    const msg={type:"aep-recording",b64:b64,mime:blob.type,seconds:seconds,transcript:srText.join(" "),srNote:srNote};
+    if(window.opener&&!window.opener.closed){window.opener.postMessage(msg,"*");$("sent").textContent="Sent to your tracker. You can close this window.";$("sent").classList.remove("hidden");$("sent").classList.add("ok");setTimeout(()=>window.close(),1500);}
+    else{fail("The tracker window is closed. Go back to the tracker and tap Record again.");$("use").disabled=false;}
+  };
+  setTimeout(()=>fr.readAsDataURL(blob),700);
+};
+</script>
+</body>
+</html>

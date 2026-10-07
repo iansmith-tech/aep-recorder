@@ -34,7 +34,7 @@ audio{width:100%;margin:14px 0 8px}
 </head>
 <body>
 <h1>Speaking practice</h1>
-<div class="prompt"><div class="t">Your prompt</div><div id="prompt">Speak clearly in English.</div><div class="t" id="target" style="margin-top:6px"></div></div>
+<div class="prompt"><div class="t">Your prompt</div><div id="prompt">Speak clearly in English.</div><div class="t" id="target" style="margin-top:6px"></div><div id="how" style="margin-top:8px;font-size:.85rem;color:var(--ink2)"></div></div>
 
 <div id="stage1" class="center">
   <button class="big" id="recbtn">Start</button>
@@ -54,10 +54,21 @@ audio{width:100%;margin:14px 0 8px}
 <script>
 const q=new URLSearchParams(location.search);
 document.getElementById("prompt").textContent=q.get("p")||"Speak clearly in English.";
-const target=+q.get("t")||60;const maxSec=Math.min(target*2+30,300);
-document.getElementById("target").textContent=`Aim for about ${target>=60?Math.round(target/60)+" minute"+(target>=120?"s":""):target+" seconds"}. Recording stops automatically at ${Math.floor(maxSec/60)}:${String(maxSec%60).padStart(2,"0")}.`;
+const target=+q.get("t")||60;document.getElementById("how").textContent=q.get("h")||"";const maxSec=Math.min(target*2+30,300);
+function tlabel(s){return s===60?"1 minute":s===90?"90 seconds":s%60===0?(s/60)+" minutes":s+" seconds";}
+document.getElementById("target").textContent=`Speak for at least ${tlabel(target)}. Recording stops automatically at ${Math.floor(maxSec/60)}:${String(maxSec%60).padStart(2,"0")}.`;
 
 let rec=null,chunks=[],stream=null,start=0,timer=null,blob=null,seconds=0,ctx=null,raf=null;
+// Silent transcript for the teacher (never shown to the student). Uses the browser's built-in speech recognition where available.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let sr=null,srText=[],srOn=false,srNote=SR?"":"speech recognition is not available in this browser";
+function srStart(){if(!SR)return;srText=[];srNote="";srOn=true;
+  try{sr=new SR();sr.lang=q.get("l")||"en-GB";sr.continuous=true;sr.interimResults=false;
+    sr.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal){const t=e.results[i][0].transcript.trim();if(t)srText.push(t);}}};
+    sr.onerror=e=>{if(e.error==="no-speech"||e.error==="aborted")return;srNote=e.error;if(e.error==="not-allowed"||e.error==="service-not-allowed"||e.error==="language-not-supported")srOn=false;};
+    sr.onend=()=>{if(srOn){try{sr.start();}catch(err){}}};
+    sr.start();
+  }catch(err){srNote=String(err.message||err);srOn=false;}}
+function srStop(){srOn=false;try{if(sr)sr.stop();}catch(err){}}
 const $=id=>document.getElementById(id);
 function fmt(s){return Math.floor(s/60)+":"+String(s%60).padStart(2,"0");}
 function fail(m){$("err").textContent=m;$("err").classList.remove("hidden");}
@@ -70,15 +81,15 @@ async function begin(){
   const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus"].find(m=>MediaRecorder.isTypeSupported(m))||"";
   rec=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);chunks=[];
   rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-  rec.onstop=()=>{stream.getTracks().forEach(t=>t.stop());clearInterval(timer);cancelAnimationFrame(raf);if(ctx){ctx.close();ctx=null;}
+  rec.onstop=()=>{srStop();stream.getTracks().forEach(t=>t.stop());clearInterval(timer);cancelAnimationFrame(raf);if(ctx){ctx.close();ctx=null;}
     blob=new Blob(chunks,{type:rec.mimeType||mime||"audio/webm"});seconds=Math.round((Date.now()-start)/1000);
-    $("play").src=URL.createObjectURL(blob);$("stage1").classList.add("hidden");$("stage2").classList.remove("hidden");};
+    $("play").src=URL.createObjectURL(blob);$("stage1").classList.add("hidden");$("stage2").classList.remove("hidden");const short=seconds<target-5;$("use").textContent=short?`Use anyway (under ${tlabel(target)})`:"Use this recording";document.querySelector("#stage2 .hint").textContent=short?`Only ${seconds} second${seconds===1?"":"s"} — the target is ${tlabel(target)}. Tap Record again and keep talking.`:"Listen back. Happy with it?";};
   // level meter
   try{ctx=new (window.AudioContext||window.webkitAudioContext)();const src=ctx.createMediaStreamSource(stream);const an=ctx.createAnalyser();an.fftSize=512;src.connect(an);const buf=new Uint8Array(an.frequencyBinCount);
     const tick=()=>{an.getByteTimeDomainData(buf);let sum=0;for(const v of buf){const d=(v-128)/128;sum+=d*d;}const rms=Math.sqrt(sum/buf.length);$("lvl").style.width=Math.min(100,rms*300)+"%";raf=requestAnimationFrame(tick);};tick();}catch(e){}
-  rec.start();start=Date.now();
+  rec.start();start=Date.now();srStart();
   $("recbtn").textContent="Stop";$("recbtn").classList.add("rec");$("hint").textContent="Recording… tap Stop when you have finished.";
-  timer=setInterval(()=>{const s=Math.round((Date.now()-start)/1000);$("time").textContent=fmt(s);if(s>=maxSec)rec.stop();},250);
+  timer=setInterval(()=>{const s=Math.round((Date.now()-start)/1000);$("time").textContent=fmt(s);$("time").style.color=s>=target?"var(--ok)":"";if(s>=target)$("hint").textContent="Target reached — finish your point, then tap Stop.";if(s>=maxSec)rec.stop();},250);
 }
 function stop(){if(rec&&rec.state!=="inactive")rec.stop();}
 $("recbtn").onclick=()=>{rec&&rec.state==="recording"?stop():begin();};
@@ -87,11 +98,11 @@ $("use").onclick=()=>{
   if(!blob)return;$("use").disabled=true;
   const fr=new FileReader();
   fr.onload=()=>{const b64=fr.result.split(",")[1];
-    const msg={type:"aep-recording",b64:b64,mime:blob.type,seconds:seconds};
+    const msg={type:"aep-recording",b64:b64,mime:blob.type,seconds:seconds,transcript:srText.join(" "),srNote:srNote};
     if(window.opener&&!window.opener.closed){window.opener.postMessage(msg,"*");$("sent").textContent="Sent to your tracker. You can close this window.";$("sent").classList.remove("hidden");$("sent").classList.add("ok");setTimeout(()=>window.close(),1500);}
     else{fail("The tracker window is closed. Go back to the tracker and tap Record again.");$("use").disabled=false;}
   };
-  fr.readAsDataURL(blob);
+  setTimeout(()=>fr.readAsDataURL(blob),700);
 };
 </script>
 </body>
